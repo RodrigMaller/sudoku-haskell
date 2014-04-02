@@ -34,15 +34,14 @@ getIndexs grid = [(x,y) | x <- [1..n], y <- [1..m], 0 == (getElem x y grid)]
               m = ncols grid
 
 isValid :: Index -> Int -> SudokuGrid -> Bool
-isValid (x,y) number grid = --((Vector.length (Vector.filter (\a -> (a == number)) (getRow x grid))) == 0) 
-                            ((Vector.length (Vector.filter (\a -> (a == number)) (getCol y grid))) == 0)
+isValid (x,y) number grid = ((Vector.length (Vector.filter (\a -> (a == number)) (getRow x grid))) == 0) && 
+                            ((Vector.length (Vector.filter (\a -> (a == number)) (getCol y grid))) == 0) &&
+                            ((length (filter (\(x',y') -> number == (getElem x' y' grid)) blockIndexs)) == 0)
+                     where
+                        blockX = ((div (x - 1) 3) * 3) + 1
+                        blockY = ((div (y - 1) 3) * 3) + 1
+                        blockIndexs = [(x',y') | x' <- [blockX..(blockX+2)], y' <- [blockY..(blockY+2)]]
 
-isSolution :: SudokuGrid -> Bool 
-isSolution grid = (length [(x,y) | x <- [1..n], y <- [1..m], not (isValid (x,y) (getElem x y grid) grid)]) == 0
-            where 
-              n = nrows grid
-              m = ncols grid
- 
 possibleNumbersToPos :: Index -> SudokuGrid -> [Int]
 possibleNumbersToPos (x,y) grid = [z | z <- [1..9], isValid (x,y) z grid]
 
@@ -53,7 +52,7 @@ mapMark :: Index -> SudokuGrid -> [SudokuGrid]
 mapMark idx grid = map (mark idx grid) (possibleNumbersToPos idx grid)
 
 findSol :: [SudokuGrid] -> [Index] -> Maybe SudokuGrid
-
+findSol []    _  = Nothing
 findSol (h:t) [] = Just h 
 findSol (h:t) all@((x,y):ls) = let sol = solve ls h in
                                 if sol == Nothing 
