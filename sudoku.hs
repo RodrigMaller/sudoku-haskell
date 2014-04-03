@@ -94,7 +94,7 @@ solveSudoku grid = solve (getIndexs grid) grid
 
 --------------- Genetic Algorithm --------------
 
-type Specimen = (Int,SudokuGrid) -- (Cost, DNA)
+--type Specimen = (Int,SudokuGrid) -- (Cost, DNA)
 
 shuffle :: [Int] -> IO [Int]
 shuffle xs = do
@@ -117,6 +117,12 @@ generateASolution ((x,y):t) grid = if (getElem x y grid) == 0
                                         z <- shuffle (possibleNumbersToPos (x,y) grid isBlockValid)
                                         generateASolution t (setElem (head z) (x,y) grid)
                                    else generateASolution t grid
+
+generatePopulation :: Int -> SudokuGrid -> [IO SudokuGrid]
+generatePopulation 1 grid = [generateASolution (getIndexs grid) grid]
+generatePopulation n grid = do
+                            let specimen = generateASolution (getIndexs grid) grid
+                            specimen:generatePopulation (n-1) grid
 
 solutionCost :: SudokuGrid -> Int
 solutionCost grid = foldr (\(x,y) acc -> acc + if isValid (x,y) (getElem x y grid) grid 
