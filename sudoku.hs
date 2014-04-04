@@ -28,6 +28,8 @@ main = do
      printSudoku $ Just sudoku
      let solvedSudoku = solveSudoku sudoku
      printSudoku solvedSudoku
+     let solvedSudoku = solveByInformedSearch sudoku
+     printSudoku solvedSudoku
      solved2Sudoku <- solveByGeneticAlgorithm sudoku 
      printSudoku $ Just solved2Sudoku
 
@@ -42,7 +44,6 @@ getIndexs grid = [(x,y) | x <- [1..n], y <- [1..m], 0 == (getElem x y grid)]
             where 
               n = nrows grid
               m = ncols grid
-
 
 -- Retorna True se o número number na posição (x,y) segue todas as 3 regras do 
 -- Sudoku, que são: - Diferentes números na linha, - Diferentes número na coluna, 
@@ -85,11 +86,8 @@ mark idx grid n = (setElem n idx grid)
 mapMark :: Index -> SudokuGrid -> [SudokuGrid]
 mapMark idx grid = map (mark idx grid) (possibleNumbersToPos idx grid isValid)
 
-heuristicLess :: [SudokuGrid] -> [SudokuGrid]
-heuristicLess idx = idx
-
 -- Cria e poda a arvore de recursão
-findSolution :: [SudokuGrid] -> [Index] -> ([SudokuGrid] -> [SudokuGrid])-> Maybe SudokuGrid
+findSolution :: [SudokuGrid] -> [Index] -> ([SudokuGrid] -> Index -> [SudokuGrid])-> Maybe SudokuGrid
 findSolution []    _  heuristic             = Nothing
 findSolution (h:t) [] heuristic             = Just h 
 findSolution (h:t) all@((x,y):ls) heuristic = let sol = solve ls h heuristic in
@@ -97,22 +95,22 @@ findSolution (h:t) all@((x,y):ls) heuristic = let sol = solve ls h heuristic in
                                     then findSolution t all heuristic
                                     else sol
 
-solve :: [Index] -> SudokuGrid -> ([SudokuGrid] -> [SudokuGrid]) -> Maybe SudokuGrid
+solve :: [Index] -> SudokuGrid -> ([SudokuGrid] -> Index -> [SudokuGrid]) -> Maybe SudokuGrid
 solve []             grid heuristic = Just grid
 solve idxs@((x,y):_) grid heuristic = do
                         guard((length pos) > 0)
                         findSolution pos idxs heuristic
               where 
-                pos = heuristic $ (mapMark (x,y) grid)
+                pos = heuristic (mapMark (x,y) grid) (x,y)
                                                                        
 solveSudoku :: SudokuGrid -> Maybe SudokuGrid
-solveSudoku grid = solve (getIndexs grid) grid heuristicLess
+solveSudoku grid = solve (getIndexs grid) grid (\a _ -> a)
 
 --------------- Genetic Algorithm --------------
 
 type Specimens = Map.Map Int (IO SudokuGrid) -- (Cost, DNA)
 
-shuffle :: [Int] -> IO [Int]
+shuffle :: [a] -> IO [a]
 shuffle xs = do
         ar <- newArray n xs
         forM [1..n] $ \i -> do
@@ -153,7 +151,6 @@ generateSpecimens n (h:t) s = do
 
 solutionCost :: SudokuGrid -> Int
 solutionCost grid = foldr (\(x,y) acc -> acc + (blockConflits (x,y) (elem x y) grid)) 
-                                                --(colConflits (x,y) (elem x y) grid)) 
                           0 [(x,y) | x <- [1..(nrows grid)], y <- [1..(ncols grid)]]
                    where elem x y = getElem x y grid
 
@@ -183,7 +180,6 @@ getParent (h:t)  = do
                     then h
                     else getParent t 
                     
-
 geneticAlgorithm :: IO Specimens -> IO Specimens
 geneticAlgorithm specimens = do
                               spec <- specimens
@@ -192,7 +188,6 @@ geneticAlgorithm specimens = do
                               dad   <- getParent pop
                               let child = sex mon dad 
                               c <- child
-                              --print $ solutionCost c
                               return $ Map.insert (solutionCost c) child spec
 
 runGeneticAlgorithm :: Int -> IO Specimens -> IO Specimens
@@ -211,8 +206,22 @@ solveByGeneticAlgorithm a = do
 
 --------------- Busca Informada ----------------
 
-heuristic :: [SudokuGrid] -> [SudokuGrid]
-heuristic idx = idx
+dist :: Index -> Index -> Int
+dist (x,y) (x',y') = abs $ (x - x') + (y - y')
+
+heuristicCost :: Index -> SudokuGrid -> Int
+heuristicCost (x,y) grid = let neighbours = [(x',y') | x' <- [1..9], y' <- [1..9], (dist (x',y') (x,y)) == 1] 
+                           in (length [(x',y') | (x',y') <- neighbours, not ((getElem x y grid) == (getElem x' y' grid))])
+
+qsort1 :: [SudokuGrid] -> Index -> [SudokuGrid]
+qsort1 []     idx = []
+qsort1 (p:xs) idx = qsort1 lesser idx ++ [p] ++ qsort1 greater idx
+    where
+        lesser  = [ y | y <- xs, (heuristicCost idx y) < (heuristicCost idx p) ]
+        greater = [ y | y <- xs, (heuristicCost idx y) >= (heuristicCost idx p) ]
+
+heuristic :: [SudokuGrid] -> Index -> [SudokuGrid]
+heuristic grids idx = qsort1 grids idx
 
 solveByInformedSearch :: SudokuGrid -> Maybe SudokuGrid
 solveByInformedSearch grid = solve (getIndexs grid) grid heuristic
