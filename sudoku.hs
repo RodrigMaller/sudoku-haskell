@@ -5,7 +5,7 @@ import Control.Monad
 import Data.Matrix
 import Data.List.Split.Internals
 import qualified Data.Vector as Vector
-import qualified Data.Set as Set
+import qualified Data.Map as Map
 import System.Random
 
 ---------- IO -------------------
@@ -49,16 +49,29 @@ getIndexs grid = [(x,y) | x <- [1..n], y <- [1..m], 0 == (getElem x y grid)]
 --                  - Diferentes números nos blocos (3x3) 
 -- Caso contrario retorna False.
 isValid :: Index -> Int -> SudokuGrid -> Bool
-isValid (x,y) number grid = ((Vector.length (Vector.filter (\a -> (a == number)) (getRow x grid))) == 0) && 
-                            ((Vector.length (Vector.filter (\a -> (a == number)) (getCol y grid))) == 0) &&
-                            isBlockValid (x,y) number grid
+isValid idx number grid = (isLineValid idx number grid) && (isColValid idx number grid) && (isBlockValid idx number grid)
 
-isBlockValid :: Index -> Int -> SudokuGrid -> Bool
-isBlockValid (x,y) number grid= ((length (filter (\(x',y') -> number == (getElem x' y' grid)) blockIndexs)) == 0)
+lineConflits :: Index -> Int -> SudokuGrid -> Int
+lineConflits (x,y) number grid = (Vector.length (Vector.filter (\a -> (a == number)) (getRow x grid)))
+
+isLineValid :: Index -> Int -> SudokuGrid -> Bool
+isLineValid idx number grid = (lineConflits idx number grid)  == 0
+
+colConflits :: Index -> Int -> SudokuGrid -> Int
+colConflits (x,y) number grid = (Vector.length (Vector.filter (\a -> (a == number)) (getCol y grid))) 
+
+isColValid :: Index -> Int -> SudokuGrid -> Bool
+isColValid idx number grid = (colConflits idx number grid) == 0
+
+blockConflits :: Index -> Int -> SudokuGrid -> Int
+blockConflits (x,y) number grid = (length (filter (\(x',y') -> number == (getElem x' y' grid)) blockIndexs))
                      where
                         blockX = ((div (x - 1) 3) * 3) + 1
                         blockY = ((div (y - 1) 3) * 3) + 1
                         blockIndexs = [(x',y') | x' <- [blockX..(blockX+2)], y' <- [blockY..(blockY+2)]]
+
+isBlockValid :: Index -> Int -> SudokuGrid -> Bool
+isBlockValid idx number grid = (blockConflits idx number grid) == 0
 
 -- Retorna uma lista com todos os números que são válidos para a posição (x,y)
 possibleNumbersToPos :: Index -> SudokuGrid -> ((Int,Int) -> Int -> SudokuGrid -> Bool) -> [Int]
@@ -72,29 +85,32 @@ mark idx grid n = (setElem n idx grid)
 mapMark :: Index -> SudokuGrid -> [SudokuGrid]
 mapMark idx grid = map (mark idx grid) (possibleNumbersToPos idx grid isValid)
 
+heuristicLess :: [SudokuGrid] -> [SudokuGrid]
+heuristicLess idx = idx
+
 -- Cria e poda a arvore de recursão
-findSolution :: [SudokuGrid] -> [Index] -> Maybe SudokuGrid
-findSolution []    _  = Nothing
-findSolution (h:t) [] = Just h 
-findSolution (h:t) all@((x,y):ls) = let sol = solve ls h in
+findSolution :: [SudokuGrid] -> [Index] -> ([SudokuGrid] -> [SudokuGrid])-> Maybe SudokuGrid
+findSolution []    _  heuristic             = Nothing
+findSolution (h:t) [] heuristic             = Just h 
+findSolution (h:t) all@((x,y):ls) heuristic = let sol = solve ls h heuristic in
                                     if sol == Nothing 
-                                    then findSolution t all
+                                    then findSolution t all heuristic
                                     else sol
 
-solve :: [Index] -> SudokuGrid -> Maybe SudokuGrid
-solve []             grid = Just grid
-solve idxs@((x,y):_) grid = do
+solve :: [Index] -> SudokuGrid -> ([SudokuGrid] -> [SudokuGrid]) -> Maybe SudokuGrid
+solve []             grid heuristic = Just grid
+solve idxs@((x,y):_) grid heuristic = do
                         guard((length pos) > 0)
-                        findSolution pos idxs
+                        findSolution pos idxs heuristic
               where 
-                pos = (mapMark (x,y) grid)
+                pos = heuristic $ (mapMark (x,y) grid)
                                                                        
 solveSudoku :: SudokuGrid -> Maybe SudokuGrid
-solveSudoku grid = solve (getIndexs grid) grid 
+solveSudoku grid = solve (getIndexs grid) grid heuristicLess
 
 --------------- Genetic Algorithm --------------
 
---type Specimen = (Int,SudokuGrid) -- (Cost, DNA)
+type Specimens = Map.Map Int (IO SudokuGrid) -- (Cost, DNA)
 
 shuffle :: [Int] -> IO [Int]
 shuffle xs = do
@@ -114,28 +130,91 @@ generateASolution :: [Index] -> SudokuGrid -> IO SudokuGrid
 generateASolution [] grid      = return grid
 generateASolution ((x,y):t) grid = if (getElem x y grid) == 0 
                                    then do 
-                                        z <- shuffle (possibleNumbersToPos (x,y) grid isBlockValid)
+                                        z <- shuffle (possibleNumbersToPos (x,y) grid isLineValid)
                                         generateASolution t (setElem (head z) (x,y) grid)
                                    else generateASolution t grid
 
-generatePopulation :: Int -> SudokuGrid -> [IO SudokuGrid]
-generatePopulation 1 grid = [generateASolution (getIndexs grid) grid]
-generatePopulation n grid = do
+generatePopulation_ :: Int -> SudokuGrid -> [IO SudokuGrid]
+generatePopulation_ 1 grid = [generateASolution (getIndexs grid) grid]
+generatePopulation_ n grid = do
                             let specimen = generateASolution (getIndexs grid) grid
-                            specimen:generatePopulation (n-1) grid
+                            specimen:generatePopulation_ (n-1) grid
+
+generatePopulation :: Int -> SudokuGrid -> IO Specimens
+generatePopulation n grid = generateSpecimens n (generatePopulation_ n grid) Map.empty
+
+generateSpecimens :: Int -> [IO SudokuGrid] -> Specimens -> IO Specimens
+generateSpecimens 0 _ s = return s
+generateSpecimens n (h:t) s = do
+                              h' <- h
+                              specimens <- generateSpecimens (n-1) t s
+                              return (Map.insert (solutionCost h') h specimens)
+
 
 solutionCost :: SudokuGrid -> Int
-solutionCost grid = foldr (\(x,y) acc -> acc + if isValid (x,y) (getElem x y grid) grid 
-                                               then 0 
-                                               else 1) 
+solutionCost grid = foldr (\(x,y) acc -> acc + (blockConflits (x,y) (elem x y) grid)) 
+                                                --(colConflits (x,y) (elem x y) grid)) 
                           0 [(x,y) | x <- [1..(nrows grid)], y <- [1..(ncols grid)]]
+                   where elem x y = getElem x y grid
 
+copyLine :: Int -> SudokuGrid -> SudokuGrid -> SudokuGrid
+copyLine lineN from to = mapRow (\p x -> (getElem lineN p from)) lineN to
 
---sex :: SudokuGrid -> SudokuGrid -> SudokuGrid
+sex_ :: SudokuGrid -> SudokuGrid -> SudokuGrid -> Int -> IO SudokuGrid
+sex_ _ _ grid3 0         = return grid3
+sex_ grid1 grid2 grid3 n = do 
+                           ran <- (randomIO :: IO Int)
+                           let ranm = mod ran 100
+                           child1 <- sex_ grid1 grid2 (copyLine n grid1 grid3) (n-1)
+                           child2 <- sex_ grid1 grid2 (copyLine n grid2 grid3) (n-1)
+                           if (((solutionCost child1)+ranm) < (ranm+(solutionCost child2)))
+                            then return child1
+                            else return child2
 
---geneticAlgorithm :: [SudokuGrid] -> [SudokuGrid]
+sex :: SudokuGrid -> SudokuGrid -> IO SudokuGrid
+sex grid1 grid2 = sex_ grid1 grid2 (zero (nrows grid1) (ncols grid1)) (nrows grid1)
+
+getParent :: [IO SudokuGrid] -> IO SudokuGrid 
+getParent (h:[]) = h 
+getParent (h:t)  = do 
+                    ran <- (randomIO :: IO Int)
+                    let ranm = mod ran 100
+                    if (ranm < 10)
+                    then h
+                    else getParent t 
+                    
+
+geneticAlgorithm :: IO Specimens -> IO Specimens
+geneticAlgorithm specimens = do
+                              spec <- specimens
+                              let pop = Map.elems spec
+                              mon   <- getParent pop
+                              dad   <- getParent pop
+                              let child = sex mon dad 
+                              c <- child
+                              --print $ solutionCost c
+                              return $ Map.insert (solutionCost c) child spec
+
+runGeneticAlgorithm :: Int -> IO Specimens -> IO Specimens
+runGeneticAlgorithm 0 specimens = specimens
+runGeneticAlgorithm n specimens = do
+                                  runGeneticAlgorithm (n-1) (geneticAlgorithm specimens)
 
 solveByGeneticAlgorithm :: SudokuGrid -> IO SudokuGrid
-solveByGeneticAlgorithm a = generateASolution (getIndexs a) a
+solveByGeneticAlgorithm a = do
+                            let popInit = generatePopulation 5000 a          
+                            newPop <- runGeneticAlgorithm 16000 popInit
+                            let l = Map.elems newPop
+                            best <- head l
+                            print $ solutionCost best
+                            return best
+
+--------------- Busca Informada ----------------
+
+heuristic :: [SudokuGrid] -> [SudokuGrid]
+heuristic idx = idx
+
+solveByInformedSearch :: SudokuGrid -> Maybe SudokuGrid
+solveByInformedSearch grid = solve (getIndexs grid) grid heuristic
 
 ------------------------------------------------
