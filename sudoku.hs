@@ -226,4 +226,4 @@ heuristic grids idx = qsort1 grids idx
 solveByInformedSearch :: SudokuGrid -> Maybe SudokuGrid
 solveByInformedSearch grid = solve (getIndexs grid) grid heuristic
 
-------------------------------------------------
+-----------------------------------------------
